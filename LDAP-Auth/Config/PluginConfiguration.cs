@@ -14,6 +14,7 @@ namespace Jellyfin.Plugin.LDAP_Auth.Config
         {
             LdapServer = "ldap-server.contoso.com";
             LdapPort = 389;
+            AllowPassChange = false;
             UseSsl = true;
             UseStartTls = false;
             SkipSslVerify = false;
@@ -21,11 +22,13 @@ namespace Jellyfin.Plugin.LDAP_Auth.Config
             LdapBindPassword = "password";
             LdapBaseDn = "o=domains,dc=contoso,dc=com";
             LdapSearchFilter = "(memberOf=CN=JellyfinUsers,DC=contoso,DC=com)";
+            LdapAdminBaseDn = string.Empty;
             LdapAdminFilter = "(enabledService=JellyfinAdministrator)";
             LdapSearchAttributes = "uid, cn, mail, displayName";
             EnableCaseInsensitiveUsername = false;
             CreateUsersFromLdap = true;
             LdapUsernameAttribute = "uid";
+            LdapPasswordAttribute = "userPassword";
             EnableAllFolders = false;
             EnabledFolders = Array.Empty<string>();
         }
@@ -76,6 +79,11 @@ namespace Jellyfin.Plugin.LDAP_Auth.Config
         public string LdapSearchFilter { get; set; }
 
         /// <summary>
+        /// Gets or sets the ldap admin search base dn.
+        /// </summary>
+        public string LdapAdminBaseDn { get; set; }
+
+        /// <summary>
         /// Gets or sets the ldap admin search filter.
         /// </summary>
         public string LdapAdminFilter { get; set; }
@@ -96,9 +104,19 @@ namespace Jellyfin.Plugin.LDAP_Auth.Config
         public bool CreateUsersFromLdap { get; set; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether to allow password change (Requires privileged bind user).
+        /// </summary>
+        public bool AllowPassChange { get; set; }
+
+        /// <summary>
         /// Gets or sets the ldap username attribute.
         /// </summary>
         public string LdapUsernameAttribute { get; set; }
+
+        /// <summary>
+        /// Gets or sets the ldap password attribute.
+        /// </summary>
+        public string LdapPasswordAttribute { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether to enable access to all library folders.
@@ -109,5 +127,10 @@ namespace Jellyfin.Plugin.LDAP_Auth.Config
         /// Gets or sets a list of folder Ids which are enabled for access by default.
         /// </summary>
         public string[] EnabledFolders { get; set; }
+
+        /// <summary>
+        /// Gets or sets the password reset url.
+        /// </summary>
+        public string PasswordResetUrl { get; set; }
     }
 }

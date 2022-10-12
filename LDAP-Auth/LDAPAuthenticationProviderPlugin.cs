@@ -8,6 +8,7 @@ using Jellyfin.Plugin.LDAP_Auth.Api.Models;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Authentication;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Users;
 using Microsoft.Extensions.Logging;
 using Novell.Directory.Ldap;
 
@@ -16,7 +17,7 @@ namespace Jellyfin.Plugin.LDAP_Auth
     /// <summary>
     /// Ldap Authentication Provider Plugin.
     /// </summary>
-    public class LdapAuthenticationProviderPlugin : IAuthenticationProvider
+    public class LdapAuthenticationProviderPlugin : IAuthenticationProvider, IPasswordResetProvider
     {
         private readonly ILogger<LdapAuthenticationProviderPlugin> _logger;
         private readonly IApplicationHost _applicationHost;
@@ -62,12 +63,6 @@ namespace Jellyfin.Plugin.LDAP_Auth
             var userManager = _applicationHost.Resolve<IUserManager>();
             User user = null;
             var ldapUser = LocateLdapUser(username);
-            if (ldapUser == null)
-            {
-                _logger.LogError("Found no users matching {Username} in LDAP search", username);
-                throw new AuthenticationException("Found no LDAP users matching provided username.");
-            }
-
             var ldapUsername = GetAttribute(ldapUser, UsernameAttr)?.StringValue;
             _logger.LogDebug("Setting username: {LdapUsername}", ldapUsername);
 
@@ -80,12 +75,13 @@ namespace Jellyfin.Plugin.LDAP_Auth
                 _logger.LogWarning("User Manager could not find a user for LDAP User, this may not be fatal", e);
             }
 
-            using var ldapClient = ConnectToLdap(ldapUser.Dn, password);
-
-            if (!ldapClient.Bound)
+            using (var currentUserConnection = ConnectToLdap(ldapUser.Dn, password))
             {
-                _logger.LogError("Error logging in, invalid LDAP username or password");
-                throw new AuthenticationException("Error completing LDAP login. Invalid username or password.");
+                if (!currentUserConnection.Bound)
+                {
+                    _logger.LogError("Error logging in, invalid LDAP username or password");
+                    throw new AuthenticationException("Error completing LDAP login. Invalid username or password.");
+                }
             }
 
             // Determine if the user should be an administrator
@@ -93,26 +89,37 @@ namespace Jellyfin.Plugin.LDAP_Auth
 
             if (!string.IsNullOrEmpty(AdminFilter) && !string.Equals(AdminFilter, "_disabled_", StringComparison.Ordinal))
             {
-                // Automatically follow referrals
+                using var ldapClient = ConnectToLdap();
+
                 ldapClient.Constraints = GetSearchConstraints(
                     ldapClient,
-                    ldapUser.Dn,
-                    password);
+                    LdapPlugin.Instance.Configuration.LdapBindUser,
+                    LdapPlugin.Instance.Configuration.LdapBindPassword);
 
                 try
                 {
-                    // Search the current user DN with the adminFilter
+                    var adminBaseDn = LdapPlugin.Instance.Configuration.LdapAdminBaseDn;
+                    if (string.IsNullOrEmpty(adminBaseDn))
+                    {
+                        adminBaseDn = LdapPlugin.Instance.Configuration.LdapBaseDn;
+                    }
+
                     var ldapUsers = ldapClient.Search(
-                        ldapUser.Dn,
-                        LdapConnection.ScopeBase,
-                        AdminFilter,
-                        LdapUsernameAttributes,
+                        adminBaseDn,
+                        LdapConnection.ScopeSub,
+                        AdminFilter.Replace("{username}", username, StringComparison.OrdinalIgnoreCase),
+                        Array.Empty<string>(),
                         false);
 
-                    // If we got non-zero, then the filter matched and the user is an admin
-                    if (ldapUsers.HasMore())
+                    var foundUser = false;
+                    while (ldapUsers.HasMore() && !foundUser)
                     {
-                        ldapIsAdmin = true;
+                        var currentUser = ldapUsers.Next();
+                        if (string.Equals(ldapUser.Dn, currentUser.Dn, StringComparison.Ordinal))
+                        {
+                            ldapIsAdmin = true;
+                            foundUser = true;
+                        }
                     }
                 }
                 catch (LdapException e)
@@ -128,7 +135,9 @@ namespace Jellyfin.Plugin.LDAP_Auth
                 if (LdapPlugin.Instance.Configuration.CreateUsersFromLdap)
                 {
                     user = await userManager.CreateUserAsync(ldapUsername).ConfigureAwait(false);
-                    user.AuthenticationProviderId = GetType().FullName;
+                    var providerName = GetType().FullName!;
+                    user.AuthenticationProviderId = providerName;
+                    user.PasswordResetProviderId = providerName;
                     user.SetPermission(PermissionKind.IsAdministrator, ldapIsAdmin);
                     user.SetPermission(PermissionKind.EnableAllFolders, LdapPlugin.Instance.Configuration.EnableAllFolders);
                     if (!LdapPlugin.Instance.Configuration.EnableAllFolders)
@@ -170,10 +179,33 @@ namespace Jellyfin.Plugin.LDAP_Auth
             return true;
         }
 
-        /// <inheritdoc />
+        /// <summary>
+        /// Changes the users password (Requires privileged bind user).
+        /// </summary>
+        /// <param name="user">The user who's password will be changed.</param>
+        /// <param name="newPassword">The new password to set.</param>
+        /// <returns>Completed Task notification.</returns>
+        /// <exception cref="NotImplementedException">Thrown if AllowPassChange set to false.</exception>
+        /// <exception cref="InvalidOperationException">Thrown if LdapPasswordAttribute field is null or empty.</exception>
         public Task ChangePassword(User user, string newPassword)
         {
-            throw new NotImplementedException();
+            if (!LdapPlugin.Instance.Configuration.AllowPassChange)
+            {
+                throw new NotImplementedException();
+            }
+
+            if (string.IsNullOrEmpty(LdapPlugin.Instance.Configuration.LdapPasswordAttribute))
+            {
+                throw new InvalidOperationException("Password attribute is not set");
+            }
+
+            var passAttr = LdapPlugin.Instance.Configuration.LdapPasswordAttribute;
+            var ldapUser = LocateLdapUser(user.Username);
+            using var ldapClient = ConnectToLdap();
+            var ldapAttr = new LdapAttribute(passAttr, newPassword);
+            var ldapMod = new LdapModification(LdapModification.Replace, ldapAttr);
+            ldapClient.Modify(ldapUser.Dn, ldapMod);
+            return Task.CompletedTask;
         }
 
         private static bool LdapClient_UserDefinedServerCertValidationDelegate(
@@ -282,7 +314,41 @@ namespace Jellyfin.Plugin.LDAP_Auth
                 }
             }
 
+            if (ldapUser == null)
+            {
+                _logger.LogError("Found no users matching {Username} in LDAP search", username);
+                throw new AuthenticationException("Found no LDAP users matching provided username.");
+            }
+
             return ldapUser;
+        }
+
+        /// <inheritdoc />
+        public Task<ForgotPasswordResult> StartForgotPasswordProcess(User user, bool isInNetwork)
+        {
+            var resetUrl = LdapPlugin.Instance.Configuration.PasswordResetUrl;
+            if (string.IsNullOrEmpty(resetUrl))
+            {
+                throw new NotImplementedException();
+            }
+
+            resetUrl = resetUrl
+                .Replace("$userId", user.Id.ToString(), StringComparison.OrdinalIgnoreCase)
+                .Replace("$userName", user.Username, StringComparison.OrdinalIgnoreCase);
+
+            var result = new ForgotPasswordResult
+            {
+                Action = ForgotPasswordAction.PinCode,
+                PinFile = resetUrl
+            };
+
+            return Task.FromResult(result);
+        }
+
+        /// <inheritdoc />
+        public Task<PinRedeemResult> RedeemPasswordResetPin(string pin)
+        {
+            throw new NotImplementedException();
         }
 
         private LdapAttribute GetAttribute(LdapEntry userEntry, string attr)

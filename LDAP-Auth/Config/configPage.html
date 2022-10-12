@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns="http://www.w3.org/1999/html">
 <head>
     <title>LDAP</title>
 </head>
@@ -45,6 +45,22 @@
                                     </label>
                                     <div class="fieldDescription checkboxFieldDescription">Skip verification of connection certificate when using SSL/STARTTLS.</div>
                                 </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label>
+                                        <input type="checkbox" is="emby-checkbox" id="chkAllowPassChange" />
+                                        <span>Allow Password Change</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Allow users to change password (Requires privileged bind user).</div>
+                                </div>
+                                <div class="inputContainer fldExternalAddressFilter">
+                                    <input is="emby-input" type="text" id="txtLdapPasswordResetUrl" label="Password Reset Url:" />
+                                    <div class="fieldDescription">
+                                        The url for password reset.
+                                        </br>Placeholders:
+                                        </br>- $userId
+                                        </br>- $userName
+                                    </div>
+                                </div>
                                 <div class="inputContainer fldExternalAddressFilter">
                                     <input is="emby-input" type="text" id="txtLdapBindUser" label="LDAP Bind User:" />
                                     <div class="fieldDescription">A bind user for LDAP search queries, required if your LDAP doesn't support anonymous bind.</div>
@@ -70,8 +86,12 @@
                                     <div class="fieldDescription">The LDAP search filter to find users for Jellyfin, e.g. (objectClass=inetOrgPerson).</div>
                                 </div>
                                 <div class="inputContainer fldExternalAddressFilter">
+                                    <input is="emby-input" type="text" id="txtLdapAdminBaseDn" label="LDAP Admin Base DN:" />
+                                    <div class="fieldDescription">The LDAP search base dn to find administrative users for Jellyfin, e.g. (cn=admins,dc=contoso,dc=com). Defaults to user dn if empty</div>
+                                </div>
+                                <div class="inputContainer fldExternalAddressFilter">
                                     <input is="emby-input" type="text" id="txtLdapAdminFilter" label="LDAP Admin Filter:" />
-                                    <div class="fieldDescription">The LDAP search filter to find administrative users for Jellyfin, e.g. (objectClass=JellyfinAdministrator).
+                                    <div class="fieldDescription">The LDAP search filter to find administrative users for Jellyfin, e.g. (objectClass=JellyfinAdministrator). Variable {username} is available for more complex filters e.g. (memberUid={username}).
                                         If left blank, administrative state must be configured manually for each user. If set, administrative access will automatically be applied
                                         (either granting or removing administrative access) when the LDAP user next logs in. If the user is currently logged in, this filter will
                                         not change their active session permissions.
@@ -116,6 +136,10 @@
                                     <input is="emby-input" type="text" id="txtLdapUsernameAttribute" label="LDAP Name Attribute:" />
                                     <div class="fieldDescription">The LDAP attribute to create Jellyfin user names from.</div>
                                 </div>
+                                <div class="inputContainer fldExternalAddressFilter">
+                                    <input is="emby-input" type="text" id="txtLdapPasswordAttribute" label="LDAP Password Attribute:" />
+                                    <div class="fieldDescription">The LDAP attribute to change passwords with (only applies to password change toggle).</div>
+                                </div>
                                 <div class="folderAccessContainer">
                                     <h2>${HeaderLibraryAccess}</h2>
                                     <label class="checkboxContainer">
@@ -153,11 +177,13 @@
                 chkUseSsl: document.querySelector("#chkUseSsl"),
                 chkUseStartTls: document.querySelector("#chkUseStartTls"),
                 chkSkipSslVerify: document.querySelector("#chkSkipSslVerify"),
+                chkAllowPassChange: document.querySelector("#chkAllowPassChange"),
                 txtLdapBindUser: document.querySelector("#txtLdapBindUser"),
                 txtLdapBindPassword: document.querySelector("#txtLdapBindPassword"),
                 txtLdapBaseDn: document.querySelector("#txtLdapBaseDn"),
                 divServerTestResults: document.querySelector("#divServerTestResults"),
                 txtLdapSearchFilter: document.querySelector("#txtLdapSearchFilter"),
+                txtLdapAdminBaseDn: document.querySelector("#txtLdapAdminBaseDn"),
                 txtLdapAdminFilter: document.querySelector("#txtLdapAdminFilter"),
                 divFilterTestResults: document.querySelector("#divFilterTestResults"),
                 txtLdapSearchAttributes: document.querySelector("#txtLdapSearchAttributes"),
@@ -166,8 +192,10 @@
                 divSearchTestResults: document.querySelector("#divSearchTestResults"),
                 chkEnableUserCreation: document.querySelector("#chkEnableUserCreation"),
                 txtLdapUsernameAttribute: document.querySelector("#txtLdapUsernameAttribute"),
+                txtLdapPasswordAttribute: document.querySelector("#txtLdapPasswordAttribute"),
                 chkEnableAllFolders: document.querySelector('#chkEnableAllFolders'),
                 folderAccessList: document.querySelector('.folderAccess'),
+                txtPasswordResetUrl: document.querySelector("#txtLdapPasswordResetUrl")
             };
 
             document.querySelector('.esqConfigurationPage').addEventListener("pageshow", function () {
@@ -182,20 +210,24 @@
                     LdapConfigurationPage.chkUseSsl.checked = config.UseSsl;
                     LdapConfigurationPage.chkUseStartTls.checked = config.UseStartTls;
                     LdapConfigurationPage.chkSkipSslVerify.checked = config.SkipSslVerify;
+                    LdapConfigurationPage.chkAllowPassChange.checked = config.AllowPassChange;
                     LdapConfigurationPage.txtLdapBindUser.value = config.LdapBindUser;
                     LdapConfigurationPage.txtLdapBindPassword.value = config.LdapBindPassword;
                     LdapConfigurationPage.txtLdapBaseDn.value = config.LdapBaseDn;
                     LdapConfigurationPage.txtLdapSearchFilter.value = config.LdapSearchFilter;
+                    LdapConfigurationPage.txtLdapAdminBaseDn.value = config.LdapAdminBaseDn || "";
                     LdapConfigurationPage.txtLdapAdminFilter.value =
                         (config.LdapAdminFilter === '_disabled_') ? "" : config.LdapAdminFilter;
                     LdapConfigurationPage.txtLdapSearchAttributes.value = config.LdapSearchAttributes;
                     LdapConfigurationPage.chkEnableCaseInsensitiveUsername.checked = config.EnableCaseInsensitiveUsername;
                     LdapConfigurationPage.chkEnableUserCreation.checked = config.CreateUsersFromLdap;
                     LdapConfigurationPage.txtLdapUsernameAttribute.value = config.LdapUsernameAttribute;
+                    LdapConfigurationPage.txtLdapPasswordAttribute.value = config.LdapPasswordAttribute;
                     config.EnableAllFolders = config.EnableAllFolders || false;
                     LdapConfigurationPage.chkEnableAllFolders.checked = config.EnableAllFolders;
                     /* Default to empty array if Enabled Folders is not set */
                     config.EnabledFolders = config.EnabledFolders || [];
+                    LdapConfigurationPage.txtPasswordResetUrl.value = config.PasswordResetUrl || '';
                     loadMediaFolders(config).then(() => {
                       Dashboard.hideLoadingMsg();
                     });
@@ -261,22 +293,26 @@
                     config.LdapPort = parseInt(LdapConfigurationPage.txtLdapPort.value);
                     config.UseSsl = LdapConfigurationPage.chkUseSsl.checked;
                     config.UseStartTls = LdapConfigurationPage.chkUseStartTls.checked;
+                    config.AllowPassChange = LdapConfigurationPage.chkAllowPassChange.checked;
                     config.SkipSslVerify = LdapConfigurationPage.chkSkipSslVerify.checked;
                     config.LdapBindUser = LdapConfigurationPage.txtLdapBindUser.value;
                     config.LdapBindPassword = LdapConfigurationPage.txtLdapBindPassword.value;
                     config.LdapBaseDn = LdapConfigurationPage.txtLdapBaseDn.value;
                     config.LdapSearchFilter = LdapConfigurationPage.txtLdapSearchFilter.value;
+                    config.LdapAdminBaseDn = LdapConfigurationPage.txtLdapAdminBaseDn.value;
                     config.LdapAdminFilter = LdapConfigurationPage.txtLdapAdminFilter.value || '_disabled_';
                     config.LdapSearchAttributes = LdapConfigurationPage.txtLdapSearchAttributes.value;
                     config.EnableCaseInsensitiveUsername = LdapConfigurationPage.chkEnableCaseInsensitiveUsername.checked;
                     config.CreateUsersFromLdap = LdapConfigurationPage.chkEnableUserCreation.checked;
                     config.LdapUsernameAttribute = LdapConfigurationPage.txtLdapUsernameAttribute.value;
+                    config.LdapPasswordAttribute = LdapConfigurationPage.txtLdapPasswordAttribute.value;
                     /* Map the set of checked input items to an array of library Id's */
                     config.EnableAllFolders = LdapConfigurationPage.chkEnableAllFolders.checked || false;
                     let folders = document.querySelectorAll('#folderList input');
                     folders = Array.prototype.filter.call(folders, folder => folder.checked)
                       .map(folder => folder.getAttribute("data-id"));
                     config.EnabledFolders = folders;
+                    config.PasswordResetUrl = LdapConfigurationPage.txtPasswordResetUrl.value;
                     window.ApiClient.updatePluginConfiguration(LdapConfigurationPage.pluginUniqueId, config).then(Dashboard.processPluginConfigurationUpdateResult);
                 });
 
@@ -296,11 +332,13 @@
                     LdapServer: LdapConfigurationPage.txtLdapServer.value,
                     LdapPort: parseInt(LdapConfigurationPage.txtLdapPort.value),
                     UseSsl: LdapConfigurationPage.chkUseSsl.checked,
+                    AllowPassChange: LdapConfigurationPage.chkAllowPassChange.checked,
                     UseStartTls: LdapConfigurationPage.chkUseStartTls.checked,
                     SkipSslVerify: LdapConfigurationPage.chkSkipSslVerify.checked,
                     LdapBindUser: LdapConfigurationPage.txtLdapBindUser.value,
                     LdapBindPassword: LdapConfigurationPage.txtLdapBindPassword.value,
                     LdapBaseDn: LdapConfigurationPage.txtLdapBaseDn.value,
+                    PasswordResetUrl: LdapConfigurationPage.txtPasswordResetUrl.value,
                 }
 
                 const handler = response => response.json().then(res => {
